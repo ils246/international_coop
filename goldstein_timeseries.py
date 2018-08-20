@@ -1,76 +1,97 @@
 import pandas as pd
 import numpy as np
 import datetime
-from scipy.interpolate import interp1d
 from itertools import groupby
-from operator import itemgetter
 import sys
 sys.path.insert(0,'/Users/isabella/github')
 from useful_funcs import group_ranges, compute_num_days
 from CCM import CCM
-import matplotlib.pyplot as plt
-import seaborn as sns
 
 
-start_year = 1995
-end_year = 1997
-years=range(start_year,end_year+1)
-
-def build_goldstein_ts(years):
+def filter_raw_data(years):
 
     '''
-    Builds Goldstein time series from rae data.
+    filters raw data and returns a (very) large dataframe with
+    all the aggregate data
+
+    Args:
+    -----
+    years (iter): iterator with all the years to be considered
 
     Returns:
     --------
-    all_dyads [dict]: nested dictionary
-                        1st level keys : country pairs ('Country A', 'Country B')
-                        2nd level keys : dates ('YYYY-MM-DD')
+    final_df [dataframe] : dataframe with columns: Source,
+    Target and Date
     '''
 
-    all_dyads = {}
+    final_df = pd.DataFrame()
     for year in years:
-        data = pd.read_table('~/Documents/Masters/research/int-cooperation/data/events.%d.tab' % year)
-        a = data.groupby(['Source Country', 'Target Country'], axis=0)
 
-        for name, group in a:
-            # print('GROUP',len([i for i,r in group.iterrows()]))
-            # Remove self loops
-            if name[0] != name[1]:
+        print(year)
+        data=pd.read_table('~/Documents/Masters/research/int-cooperation/data/events.%d.tab' % year)
 
-                country_key=name
-                dyad = {r['Event Date']: [] for i,r in group.iterrows()}
-                dates = group.groupby('Event Date')
+        data = data.drop(columns = ['Source Name','Event ID', 'Source Sectors', 'Event Text', 'Target Name', 'Publisher', 'Sentence Number', 'Target Sectors', 'Story ID', 'City', 'Province', 'District', 'Latitude','Longitude'], axis=1)
 
-                # print (name)
+        data = data.rename(columns={'Source Country': 'Source', 'Target Country': 'Target', 'Event Date': 'Date'})
 
-                # print(len(dyad))
-                # print (len(dates))
+        final_df = pd.concat([final_df, data])
 
-                for name,group in dates:
-                    dyad[name]=np.mean(group['Intensity'])
-                    # print(group['Intensity'])
-
-                for key in dyad.keys():
-                    if country_key in all_dyads.keys():
-                        all_dyads[country_key][key]=dyad[key]
-                    else:
-                        all_dyads[country_key]= dyad
-                        all_dyads[country_key][key]=dyad[key]
+    return final_df
 
 
-    # print(len(all_dyads[('United States', 'China')]))
-    # print('all dyads', len(all_dyads.keys()))
-    return all_dyads
+def filter_by_dyad(dataframe, src, tgt, year,year2, m1, m2, d1, d2):
+
+    """
+    Args:
+    -----------
+    src [str] : source country name
+    tgt [str] : target country name
+    convers [dict] : dictionary of cameo:intensity values
+    year [int] : year to analyze
 
 
-def filter_by_gap(data, max_gap, start_year, end_year, inter_kind='linear'):
+    Returns:
+    ----------
+    ts_gs [pandas df] : timeseries of mean goldsetein score
+    for country dyad
+
+    """
+
+    timeseries = []
+
+    # filter by rows - only the dyad of interest
+    filt = dataframe[dataframe.Source == src]
+    filt = filt[filt.Target == tgt]
+
+    # dates to analyze
+    d1 = datetime.date(year,m1,d1)
+    d2 = datetime.date(year2,m2,d2)
+
+    # list containing all of the dates
+    dates = [d1 + datetime.timedelta(days=x) for x in range((d2-d1).days + 1)]
+
+    for date in dates:
+        aux = filt[filt.Date == date.strftime("%Y-%m-%d")]
+
+        if aux.empty:
+            timeseries.append(np.nan)
+
+        else:
+
+            #averaging occurrences
+            average = np.average(aux['Intensity'])
+            timeseries.append(average)
+
+    return timeseries
+
+
+def filter_by_gap(ts, max_gap, start_year, end_year, inter_kind='linear'):
 
     '''
     Args:
     -----
-
-    data [dict]: nested dicts keyed by country pair ('countryA', 'countryB')
+    doesn't need to take nested dict, just normal dict --> {(Country A, Country B): [list of Goldstein scores]}, actually needs to be read from csv created by filter_by_dyad
+    data [dict]: nested dicts keyed by country pair ('countryA', 'countryB') --> dyads
     gap [int] : number of consecutive days with missing data
 
     Returns:
@@ -82,61 +103,34 @@ def filter_by_gap(data, max_gap, start_year, end_year, inter_kind='linear'):
             2nd level vals: list with interpolated ts of goldsetin scores for every day between start_year and end_year
     '''
 
-    ts = {}
-    # 1. Check if the pair has more inteaction days than 0.5 * time slice
+    # Removing paris with nans for more than 50% of days in the sample
     total_days = compute_num_days(start_year, end_year)
-    half_life = 0.20*total_days
-    all_keys = list(data.keys())
+    thresh = 0.80*total_days
 
-    for key in all_keys:
-        if len(data[key]) <= half_life:
-            del data[key]
+    from math import isnan
+    num_nans = sum([1 for i in ts if isnan(i)])
+    if num_nans >= thresh:
+        return None
 
-    # Adding dates that don't have interactions
-    all_days = []
-    date1 = '%d-01-01' % start_year
-    date2 = '%d-12-31' % (end_year - 1)
-    start = datetime.datetime.strptime(date1, '%Y-%m-%d')
-    end = datetime.datetime.strptime(date2, '%Y-%m-%d')
-    step = datetime.timedelta(days=1)
-    while start <= end:
-        all_days.append(start.strftime('%Y-%m-%d'))
-        start += step
-
-    ts['dates']=all_days
-    ts['pairs']={}
-
-    # 2. Remove if there is a interaction gap >= 'gap'
-    sorted_keys = sorted([key for key in data.keys()])
-    for key in data.keys():
-        for date in all_days:
-            dates_with_data = data[key].keys()
-            if date not in dates_with_data:
-                data[key][str(date)]=np.nan
-
-        a = sorted([(k,data[key][k]) for k in data[key].keys()], key=lambda x: x[0])
-        a = {'Dates': [i[0] for i in a], 'Intensity': [i[1] for i in a]}
-        df = pd.DataFrame(data=a)
-
-        # for the dates where there is no data, add nan
-        aux_df = df[df['Intensity'] == np.nan]
-
-        # get the largest gap with nan
-        indexes = list(aux_df.index.values)
+    else:
+        # Remove pairs with gaps larger than maxGap
+        ts_ = pd.DataFrame({'Timeseries': ts})
+        ts_nan = pd.isna(ts_)
+        ts_['nans']=ts_nan
+        ts_nan = ts_[ts_['nans'] == True]
+        indexes = list(ts_nan.index.values)
         indexes = group_ranges(indexes)
         indexes = [list(i) for i in indexes]
         gap = filter(lambda x: x >= max_gap, [i[1]-i[0] for i in indexes if len(i) > 1])
         gap = len(list(gap)) >= 1
 
         if gap:
-            pass
-
+            return None
         else:
-            # print(key, 'there is no gap, we keep this key')
-            intensity=list(df['Intensity'].interpolate(method='linear'))
-            ts['pairs'][key] = intensity
+            ts_interpolated = list(ts_['Timeseries'].interpolate(method=inter_kind))
 
-    return ts
+            return ts_interpolated
+
 
 
 def align_ts(ts1,ts2, dual=True):
@@ -171,23 +165,27 @@ def align_ts(ts1,ts2, dual=True):
         my_list=[ts1]
 
     for ts in my_list:
-        ts_bool=pd.isna(pd.DataFrame(ts))
+        if ts !=[]:
+            ts_bool=pd.isna(pd.DataFrame(ts))
 
-        # for head align
-        tsh = ts_bool[ts_bool[0]== True][:100]
-        if tsh.empty:
+            # for head align
+            tsh = ts_bool[ts_bool[0]== True][:100]
+            if tsh.empty:
+                ts_fixes['ts%d' % counter]['head_fix']=[]
+            else:
+                head_ts = (min(tsh.index.values), max(tsh.index.values))
+                ts_fixes['ts%d' % counter]['head_fix']=head_ts
+
+            # for tail fixes
+            tst = ts_bool[ts_bool[0]== True][int(len(ts_bool)*0.5):]
+            if tst.empty:
+                ts_fixes['ts%d' % counter]['tail_fix']=[]
+            else:
+                tail_ts = (min(tst.index.values), max(tst.index.values))
+                ts_fixes['ts%d' % counter]['tail_fix']=tail_ts
+        else:
             ts_fixes['ts%d' % counter]['head_fix']=[]
-        else:
-            head_ts = (min(tsh.index.values), max(tsh.index.values))
-            ts_fixes['ts%d' % counter]['head_fix']=head_ts
-
-        # for tail fixes
-        tst = ts_bool[ts_bool[0]== True][int(len(ts_bool)*0.5):]
-        if tst.empty:
             ts_fixes['ts%d' % counter]['tail_fix']=[]
-        else:
-            tail_ts = (min(tst.index.values), max(tst.index.values))
-            ts_fixes['ts%d' % counter]['tail_fix']=tail_ts
 
         counter+=1
     return ts_fixes
@@ -290,42 +288,9 @@ def average_gs_net(ts, weighted=True, granularity='quarterly', years=None):
             averaged = {}
             for key in ts.keys():
 
-                na_fixes = align_ts(ts[key],'no second ts', dual=False)
-                if na_fixes['ts1']['head_fix'] == []:
-                    head = 0
-                else:
-                    head = na_fixes['ts1']['head_fix'][1]
-                if na_fixes['ts1']['tail_fix'] == []:
-                    tail=-1
-                else:
-                    tail = na_fixes['ts1']['tail_fix'][0]
+                if ts[key] is not None:
 
-                nan_corrected = ts[key][head:tail]
-
-                if weighted:
-                    edges.append((key[0], key[1], np.mean(nan_corrected)))
-                else:
-                    edges.append((key[0], key[1]))
-
-            return edges
-
-        elif granularity=='yearly':
-
-            counter = 0
-            aux=[]
-            averaged = {year:{} for year in years}
-
-            for year in years:
-                days = compute_num_days(year,year)
-
-                for key in ts.keys():
-
-                    # get year data
-                    year_data = ts[key][counter:counter+days+1]
-                    counter+=days
-
-                    # get fixes
-                    na_fixes = align_ts(year_data,'no second ts', dual=False)
+                    na_fixes = align_ts(ts[key],'no second ts', dual=False)
                     if na_fixes['ts1']['head_fix'] == []:
                         head = 0
                     else:
@@ -335,11 +300,52 @@ def average_gs_net(ts, weighted=True, granularity='quarterly', years=None):
                     else:
                         tail = na_fixes['ts1']['tail_fix'][0]
 
-                    nan_corrected = year_data[head+1:tail]
-                    aux.append((key[0],key[1],np.mean(nan_corrected)))
+                    nan_corrected = ts[key][head+1:tail-1]
+
+                    if weighted:
+                        edges.append((key[0], key[1], np.mean(nan_corrected)))
+                    else:
+                        edges.append((key[0], key[1]))
+
+            return edges
+
+        elif granularity=='yearly':
+
+            counter = 0
+            aux=[]
+            averaged = {year:{} for year in years}
+
+
+            for year in years:
+                days = compute_num_days(year,year)
+
+                for key in ts.keys():
+                    if ts[key] is not None:
+
+                        if year != 2016:
+                            year_data = ts[key][counter:counter+days+1]
+                            # print(counter, counter+days+1)
+
+                        else:
+                            year_data = ts[key][counter:]
+
+                        # get fixes
+                        na_fixes = align_ts(year_data,'no second ts', dual=False)
+                        if na_fixes['ts1']['head_fix'] == []:
+                            head = 0
+                        else:
+                            head = na_fixes['ts1']['head_fix'][1]
+                        if na_fixes['ts1']['tail_fix'] == []:
+                            tail=-1
+                        else:
+                            tail = na_fixes['ts1']['tail_fix'][0]
+
+                        nan_corrected = year_data[head+1:tail-1]
+                        aux.append((key[0],key[1],np.mean(nan_corrected)))
 
                 averaged[year]=aux
                 aux=[]
+                counter+=days
 
             return averaged
 
@@ -357,33 +363,58 @@ def average_gs_net(ts, weighted=True, granularity='quarterly', years=None):
                     quarters = [91,91,92,92]
 
                 for key in ts.keys():
+                    if ts[key] is not None:
 
-                    # get year data
-                    year_data = ts[key][counter:counter+days+1]
+                        if year != 2016:
+                            year_data = ts[key][counter:counter+days+1]
+                            # print(counter, counter+days+1)
 
-                    q_counter=0
-                    for i in range(4):
+                        else:
+                            year_data = ts[key][counter:]
 
-                        # I can only remove the head and tail with nan after slicing quarters,
-                        # otherwise days won't match
-                        from math import isnan
-                        quarter_data=year_data[q_counter:q_counter+quarters[i]+1]
-                        quarter=[i for i in quarter_data if not isnan(i)]
+                        # if counter <= 275:
+                        #     # get year data
+                        #     year_data = ts[key][counter:counter+days+1]
+                        # else:
+                        #     year_data = ts[key][counter:]
 
-                        if quarter != []:
-                            aux[i].append((key[0],key[1] , np.mean(quarter)))
-                        q_counter+=quarters[i]+1
+                        q_counter=0
+                        for i in range(4):
 
-                for a in range(len(aux)):
-                    label = 'Q%d' % (a+1)
-                    averaged[year][label]= {(k[0],k[1]): k[2] for k in aux[a]}
+                            # I can only remove the head and tail with nan after slicing quarters,
+                            # otherwise days won't match
+                            from math import isnan
+                            quarter_data=year_data[q_counter:q_counter+quarters[i]+1]
+                            quarter=[i for i in quarter_data if not isnan(i)]
+
+                            if quarter != []:
+                                aux[i].append((key[0],key[1] , np.mean(quarter)))
+                            q_counter+=quarters[i]+1
+
+                    for a in range(len(aux)):
+                        label = 'Q%d' % (a+1)
+                        averaged[year][label]= {(k[0],k[1]): k[2] for k in aux[a]}
 
                 aux=[[],[],[],[]]
 
             return averaged
 
 
-def polarity_networks(data,granularity='quarterly'):
+def polarity_networks(data, granularity='quarterly'):
+
+    '''
+    Returns network edges based on their polarity [postive, negative, balanced]. * Balanced are those nets with weights = 0, in our data 0 does not mean that the edge doesn't exist, just the average of interactions is 0
+
+    Args:
+    -----
+    data [dict]: aggregate shape -> {('A','B'): weights}
+                 yearly shape -> {year:[('A','B', weights]}
+                 quarterly shape -> {year:{Q: {('A','B'): weights}}}
+    Returns:
+    --------
+    nets [nested dict]: network edges divided by polarity,
+                        and similar structure to input.
+    '''
 
     if granularity=='aggregate':
         nets = {'positive':{}, 'negative':{}, 'balanced': {}}
@@ -405,13 +436,13 @@ def polarity_networks(data,granularity='quarterly'):
         }
 
         for year in data.keys():
-            for key in data[year].keys():
-                if data[year][key] > 0:
-                    nets['positive'][year][key]=data[year][key]
-                elif data[year][key]< 0:
-                    nets['negative'][year][key]=data[year][key]
+            for edge in data[year]:
+                if edge[2] > 0:
+                    nets['positive'][year][edge]= edge[2]
+                elif edge[2]< 0:
+                    nets['negative'][year][edge]=edge[2]
                 else:
-                    nets['balanced'][year][key]=data[year][key]
+                    nets['balanced'][year][edge]=edge[2]
 
     else:
         nets = {
@@ -422,28 +453,40 @@ def polarity_networks(data,granularity='quarterly'):
 
         for year in data.keys():
             for quarter in data[year].keys():
-                for key in data[year][quarter].keys():
-                    if data[year][quarter][key] > 0:
-                        print(year, quarter,key)
-                        nets['positive'][year][quarter][key]=data[year][quarter][key]
-                    elif data[year][quarter][key]< 0:
-                        nets['negative'][year][quarter][key]=data[year][quarter][key]
-                    else:
-                        nets['balanced'][year][quarter][key]=data[year][quarter][key]
+
+                if data[year][quarter] != []:
+
+                    for key in data[year][quarter].keys():
+                        if data[year][quarter][key] > 0:
+                            # print(year, quarter,key)
+                            nets['positive'][year][quarter][key]=data[year][quarter][key]
+                        elif data[year][quarter][key]< 0:
+                            nets['negative'][year][quarter][key]=data[year][quarter][key]
+                        else:
+                            nets['balanced'][year][quarter][key]=data[year][quarter][key]
 
     return nets
 
-# ###  -------  Run the Code --------  ###
-# Get the CCM coeffcient between country paris
 
+def wrapper_filter(df,dyad, max_gap):
+    '''
+    Wrapper function to parallelize the creation of
+    timeseries.
 
-# Build Average Goldsetein netowrks
-ts=build_goldstein_ts(years)
-filtered_ts=filter_by_gap(ts, 100, start_year, end_year)
-networks=average_gs_net(filtered_ts,granularity='quarterly', years=range(start_year,end_year))
+    Args:
+    -----
+    df[dataframe]: dataframe
+    dyad [tuple]: tuple with shape ('Source', 'Target')
 
+    Returns:
+    --------
+    tuple of shape ('Source', 'Target', timeseries)
 
-# build poliarity networks
-ts=build_goldstein_ts(years)
-filtered_ts=filter_by_gap(ts, 120, start_year, end_year)
-polarity_networks(filtered_ts,granularity='quarterly')
+    '''
+
+    b = filter_by_dyad(df, dyad[0], dyad[1], 1995, 2016, 1, 12, 1, 31)
+    b1 = filter_by_gap(b, max_gap, 1995, 2016)
+    return (dyad[0], dyad[1], b1)
+
+def get_basic_net_stats():
+    pass
