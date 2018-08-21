@@ -85,7 +85,7 @@ def filter_by_dyad(dataframe, src, tgt, year,year2, m1, m2, d1, d2):
     return timeseries
 
 
-def filter_by_gap(ts, max_gap, start_year, end_year, inter_kind='linear'):
+def filter_by_gap(ts, max_gap, start_year, end_year, interpolated=False, inter_kind='linear'):
 
     '''
     Args:
@@ -127,9 +127,12 @@ def filter_by_gap(ts, max_gap, start_year, end_year, inter_kind='linear'):
         if gap:
             return None
         else:
-            ts_interpolated = list(ts_['Timeseries'].interpolate(method=inter_kind))
-
-            return ts_interpolated
+            if interpolated:
+                ts_interpolated = list(ts_['Timeseries'].interpolate(method=inter_kind))
+                return ts_interpolated
+            else:
+                ts = list(ts_['Timeseries'])
+                return ts
 
 
 
@@ -468,7 +471,7 @@ def polarity_networks(data, granularity='quarterly'):
     return nets
 
 
-def wrapper_filter(df,dyad, max_gap):
+def wrapper_filter(df,dyad, max_gap, interpolated):
     '''
     Wrapper function to parallelize the creation of
     timeseries.
@@ -485,8 +488,5 @@ def wrapper_filter(df,dyad, max_gap):
     '''
 
     b = filter_by_dyad(df, dyad[0], dyad[1], 1995, 2016, 1, 12, 1, 31)
-    b1 = filter_by_gap(b, max_gap, 1995, 2016)
+    b1 = filter_by_gap(b, max_gap, 1995, 2016, interpolated=False)
     return (dyad[0], dyad[1], b1)
-
-def get_basic_net_stats():
-    pass

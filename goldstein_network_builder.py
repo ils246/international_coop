@@ -5,7 +5,9 @@ import pickle
 import argparse
 import pandas as pd
 import time
-import networkx   as nx
+import networkx as nx
+from network_tools import basic_net_stats
+import matplotlib.pyplot as plt
 
 if __name__ == '__main__':
 
@@ -19,6 +21,8 @@ if __name__ == '__main__':
     parser.add_argument('-o', '--output', type=str, help='Path to write dataframe with raw data', default='../output/data.csv')
     parser.add_argument('-gap', '--gap', type=int, help='Max gap of missing data in each pair', default=120)
     parser.add_argument('-df', '--df', type=bool, help='If create df or read existing file', default='False')
+    parser.add_argument('-interpol', '--interpol', type=bool, help='If return interpolated or raw', default='False')
+
     args=parser.parse_args()
 
 
@@ -30,8 +34,11 @@ if __name__ == '__main__':
 
 create_df_ = args.df
 read_df_ = args.input
+interpol = args.interpol
 
-def build_gs_ts(years, create_df=create_df_, read_df=read_df_):
+def build_gs_ts(years, create_df=create_df_, read_df=read_df_, interpolated=interpol):
+
+    print('Arguments: years: %d, create_df: %s, interpol: %s ' % (len(years), str(create_df), interpol ))
 
     if create_df == 'True':
         data = filter_raw_data(years)
@@ -51,7 +58,12 @@ def build_gs_ts(years, create_df=create_df_, read_df=read_df_):
     filter_dict = {(i[0], i[1]): i[2] for i in result}
 
     # pickle timeseries
-    file_ = open('timeseries_data_g%d.pickle' % args.gap, 'wb')
+    if interpol:
+        file_name = 'timeseries_data_g%d.pickle' % args.gap
+    else:
+        file_name = 'non_interpol_timeseries_data_g%d.pickle' % args.gap
+
+    file_ = open(filename, 'wb')
     pickle.dump(filter_dict, file_, protocol=pickle.HIGHEST_PROTOCOL)
     file_.close()
 
@@ -66,17 +78,13 @@ def build_gs_ts(years, create_df=create_df_, read_df=read_df_):
 ------------------------------------------------
 '''
 
-def build_networks(filter_dict):
-
-    print(' ...Working on Aggregate Network... ')
-
-    # get the filter dict so I don't need to keep running this forever
-    file_ = open('timeseries.pickle', 'wb')
-    pickle.dump(filter_dict,file_)
-    file_.close()
+def build_interpol_networks(filter_dict):
 
     # Aggregate network
     # build aggregate network
+
+    print(' ...Working on Aggregate Network... ')
+
     networks = average_gs_net(filter_dict,granularity='aggregate', years=None)
     sources = [i[0] for i in networks]
     targets = [i[1] for i in networks]
@@ -87,38 +95,37 @@ def build_networks(filter_dict):
     # polarity yerarly polarity nets
     data_for_polarity = {(sources[i],targets[i]):weights[i] for i in range(len(sources))}
     polar_nets = polarity_networks(data_for_polarity,granularity='aggregate')
-    print(polar_nets)
-    # polar_file = open('polar_networks_g%d.pickle' % args.gap, 'wb')
-    # pickle.dump(polar_nets,polar_file,protocol=pickle.HIGHEST_PROTOCOL)
-    # polar_file.close()
-    #
-    # print(' ...Working on Yearly Networks... ')
-    #
-    # # build yearly networks
-    # yearly = average_gs_net(filter_dict,granularity='yearly', years=years)
-    # yearly_file = open('yearly_gs_network_g%d.pickle' % args.gap, 'wb')
-    # pickle.dump(yearly,yearly_file,protocol=pickle.HIGHEST_PROTOCOL)
-    # yearly_file.close()
-    #
+    polar_file = open('polar_networks_g%d.pickle' % args.gap, 'wb')
+    pickle.dump(polar_nets,polar_file,protocol=pickle.HIGHEST_PROTOCOL)
+    polar_file.close()
+
+    print(' ...Working on Yearly Networks... ')
+
+    # build yearly networks
+    yearly = average_gs_net(filter_dict,granularity='yearly', years=years)
+    yearly_file = open('yearly_gs_networks_g%d.pickle' % args.gap, 'wb')
+    pickle.dump(yearly,yearly_file,protocol=pickle.HIGHEST_PROTOCOL)
+    yearly_file.close()
+
     # # polarity yearly nets
-    # polar_yearly=polarity_networks(yearly,granularity='yearly')
-    # yearly_polar_file = open('yearly_polar_network_g%d.pickle' % args.gap, 'wb')
-    # pickle.dump(polar_yearly,yearly_polar_file,protocol=pickle.HIGHEST_PROTOCOL)
-    # yearly_polar_file.close()
-    #
-    # print(' ...Working on Quarterly Networks... ')
-    #
+    polar_yearly=polarity_networks(yearly,granularity='yearly')
+    yearly_polar_file = open('yearly_polar_networks_g%d.pickle' % args.gap, 'wb')
+    pickle.dump(polar_yearly,yearly_polar_file,protocol=pickle.HIGHEST_PROTOCOL)
+    yearly_polar_file.close()
+
+    print(' ...Working on Quarterly Networks... ')
+
     # # # build quarterly timeseries
-    # quarterly = average_gs_net(filter_dict,granularity='quarterly', years=years)
-    # quarterly_file = open('quarterly_gs_network_g%d.pickle' % args.gap, 'wb')
-    # pickle.dump(quarterly,quarterly_file,protocol=pickle.HIGHEST_PROTOCOL)
-    # quarterly_file.close()
-    #
+    quarterly = average_gs_net(filter_dict,granularity='quarterly', years=years)
+    quarterly_file = open('quarterly_gs_networks_g%d.pickle' % args.gap, 'wb')
+    pickle.dump(quarterly,quarterly_file,protocol=pickle.HIGHEST_PROTOCOL)
+    quarterly_file.close()
+
     # # polarity quarterly nets
-    # polar_quarterly=polarity_networks(quarterly,granularity='quarterly')
-    # quarterly_polar_file = open('quarterly_polar_network_g%d.pickle' % args.gap, 'wb')
-    # pickle.dump(polar_quarterly,quarterly_polar_file,protocol=pickle.HIGHEST_PROTOCOL)
-    # quarterly_polar_file.close()
+    polar_quarterly=polarity_networks(quarterly,granularity='quarterly')
+    quarterly_polar_file = open('quarterly_polar_networks_g%d.pickle' % args.gap, 'wb')
+    pickle.dump(polar_quarterly,quarterly_polar_file,protocol=pickle.HIGHEST_PROTOCOL)
+    quarterly_polar_file.close()
 
 '''
 ------------------------------------------------
@@ -127,18 +134,78 @@ def build_networks(filter_dict):
 '''
 start_time = time.time()
 
-timeseries=build_gs_ts(years, create_df=args.df, read_df=args.input)
-build_networks(timeseries)
+# Make timeseries
+build_gs_ts(years)
+
+# Make all the networks
+# data = pickle.load(open('../output/timeseries_data_g120.pickle', 'rb'))
+# build_networks(data)
 
 print("------  %0.2f hours  ------" % ((time.time() - start_time)/3600))
-
 
 '''
 ------------------------------------------------
     Analyze networks at different timescales
 ------------------------------------------------
 '''
-# Aggregate timeseries
+# get basic data
+# for normal networks
+data=pickle.load(open('yearly_gs_networks_g120.pickle', 'rb'))
+basic_info={}
+for i in data:
+    stats=basic_net_stats(data[i],verbose=False)
+    basic_info[i]=stats
+
+# visualize the network in time
+font = {'Fontname': 'Arial Narrow'}
+attributes = ['No_Nodes','No_Edges', 'Density', 'No_Triangles', 'Transitivity', 'Average_link_strength']
+for i in attributes:
+    d = [basic_info[j][i] for j in basic_info]
+    plt.plot(d)
+    plt.title(i, size=14, **font)
+    plt.xticks(range(21), range(1995,2017), rotation=90, **font)
+    plt.xlabel('Years', **font)
+    plt.show()
+
+
+# visualize the
+
+
+# # for quarterly networks
+# data=pickle.load(open('quarterly_gs_network_g120.pickle', 'rb'))
+# basic_info={y:{'Q1':[], 'Q2':[], 'Q3':[], 'Q4':[]} for y in data}
+# for i in data:
+#     for j in ['Q1', 'Q2', 'Q3', 'Q4']:
+#         my_list=[(k[0],k[1],data[i][j][k]) for k in data[i][j]]
+#         stats=basic_net_stats(my_list,verbose=False)
+#         basic_info[i][j]=stats
+#
+# # for polar yearly Networks
+# data=pickle.load(open('yearly_polar_networks_g120.pickle', 'rb'))
+# basic_info={'positive':{}, 'negative':{}, 'balanced':{}}
+# for i in ['positive','negative']:
+#     for j in data[i].keys():
+#         my_list = [ii for ii in data[i][j].keys()]
+#         stats=basic_net_stats(my_list,verbose=False)
+#         basic_info[i][j]=stats
+#
+# # for polary quarterly networks
+# basic_info={
+#             'positive':{y:{'Q1':[], 'Q2':[], 'Q3':[], 'Q4':[]} for y in range(1995,2017)},
+#             'negative':{y:{'Q1':[], 'Q2':[], 'Q3':[], 'Q4':[]} for y in range(1995,2017)},
+#             }
+#
+# data=pickle.load(open('quarterly_polar_networks_g120.pickle', 'rb'))
+# for i in ['positive','negative']:
+#     for j in data[i].keys():
+#         for k in ['Q1', 'Q2', 'Q3', 'Q4']:
+#             my_list=[(l[0],l[1],data[i][j][k][l]) for l in data[i][j][k]]
+#             stats=basic_net_stats(my_list,verbose=False)
+#             basic_info[i][j][k]=stats
+
+
+
+
 
 '''
 ------------------------------------------------
