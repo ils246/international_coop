@@ -20,8 +20,8 @@ if __name__ == '__main__':
     parser.add_argument('-i', '--input', type=str, help='Path to dataframe with raw data', default='../output/data.csv')
     parser.add_argument('-o', '--output', type=str, help='Path to write dataframe with raw data', default='../output/data.csv')
     parser.add_argument('-gap', '--gap', type=int, help='Max gap of missing data in each pair', default=120)
-    parser.add_argument('-df', '--df', type=bool, help='If create df or read existing file', default='False')
-    parser.add_argument('-interpol', '--interpol', type=bool, help='If return interpolated or raw', default='False')
+    parser.add_argument('-df', '--df', type=str, help='If create df or read existing file', default='False')
+    parser.add_argument('-interpol', '--interpol', type=str, help='If return interpolated or raw', default='False')
 
     args=parser.parse_args()
 
@@ -54,11 +54,11 @@ def build_gs_ts(years, create_df=create_df_, read_df=read_df_, interpolated=inte
 
     # # Build Average Goldsetein netowrks
     result = Parallel(n_jobs=args.cores)(delayed(wrapper_filter)
-    (df=data, dyad=i, max_gap=args.gap) for i in names_from_groups)
+    (df=data, dyad=i, max_gap=args.gap, interpolated=interpolated) for i in names_from_groups)
     filter_dict = {(i[0], i[1]): i[2] for i in result}
 
     # pickle timeseries
-    if interpol:
+    if interpol == 'True':
         file_name = 'timeseries_data_g%d.pickle' % args.gap
     else:
         file_name = 'non_interpol_timeseries_data_g%d.pickle' % args.gap
@@ -141,7 +141,7 @@ build_gs_ts(years)
 # data = pickle.load(open('../output/timeseries_data_g120.pickle', 'rb'))
 # build_networks(data)
 
-print("------  %0.2f hours  ------" % ((time.time() - start_time)/3600))
+# print("------  %0.2f hours  ------" % ((time.time() - start_time)/3600))
 
 '''
 ------------------------------------------------
@@ -150,22 +150,22 @@ print("------  %0.2f hours  ------" % ((time.time() - start_time)/3600))
 '''
 # get basic data
 # for normal networks
-data=pickle.load(open('yearly_gs_networks_g120.pickle', 'rb'))
-basic_info={}
-for i in data:
-    stats=basic_net_stats(data[i],verbose=False)
-    basic_info[i]=stats
-
-# visualize the network in time
-font = {'Fontname': 'Arial Narrow'}
-attributes = ['No_Nodes','No_Edges', 'Density', 'No_Triangles', 'Transitivity', 'Average_link_strength']
-for i in attributes:
-    d = [basic_info[j][i] for j in basic_info]
-    plt.plot(d)
-    plt.title(i, size=14, **font)
-    plt.xticks(range(21), range(1995,2017), rotation=90, **font)
-    plt.xlabel('Years', **font)
-    plt.show()
+# data=pickle.load(open('yearly_gs_networks_g120.pickle', 'rb'))
+# basic_info={}
+# for i in data:
+#     stats=basic_net_stats(data[i],verbose=False)
+#     basic_info[i]=stats
+#
+# # visualize the network in time
+# font = {'Fontname': 'Arial Narrow'}
+# attributes = ['No_Nodes','No_Edges', 'Density', 'No_Triangles', 'Transitivity', 'Average_link_strength']
+# for i in attributes:
+#     d = [basic_info[j][i] for j in basic_info]
+#     plt.plot(d)
+#     plt.title(i, size=14, **font)
+#     plt.xticks(range(21), range(1995,2017), rotation=90, **font)
+#     plt.xlabel('Years', **font)
+#     plt.show()
 
 
 # visualize the
